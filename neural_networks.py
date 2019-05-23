@@ -1,6 +1,7 @@
 import numpy as np
 import linear_regression_models as lin
 import activation_functions
+import clustering
 
 def mse_loss(y, pred):
     return np.mean((y - pred)**2)
@@ -227,6 +228,85 @@ def mlp_predict(model, x, build_regressors=True, return_class=True):
     else:
         return model_output
 
+def rbf_train(x, y, gamma=1, x_validation=None, y_validation=None,
+              num_hidden_nodes=10, output="regression",
+              num_epochs=100, alpha=1, mini_batch_size=1, compute_loss=True):
+    
+    # Preprocess the input and output data
+    
+    x_matrix = x  
+        
+    y = y.copy()         
+    if len(y.shape) == 1:   
+        y = y[:,None]
+        
+    if y_validation is not None:
+        y_validation = y_validation.copy()         
+        if len(y_validation.shape) == 1:   
+            y_validation = y_validation[:,None]
+    
+    # Select the hidden and output activation functions    
+        
+    activation_function = activation_functions.rbf    
+    out_activation_function, out_grad_activation_function, loss = select_output_type(output, y)   
+        
+    # Initialize the weights
+    w_hidden = clustering.kmeans(x_matrix, num_hidden_nodes, max_iter=100, num_rep=10)['centroids']
+    w_output = np.random.normal(size=(y.shape[1], num_hidden_nodes + 1))
+        
+    loss_history = []
+    validation_loss_history = []
+    for epoch in range(num_epochs):
+        
+        random_permutation = np.array_split(np.random.permutation(y.shape[0]),
+                                            np.ceil(y.shape[0] / mini_batch_size))
+        
+        for i in random_permutation:  
+            
+            xi = x_matrix[i]
+            yi = y[i]
+            
+            # Forward pass
+            layer_z = np.vstack((np.ones((1, xi.shape[0])), activation_function(w_hidden, xi, gamma)))
+            model_output = out_activation_function(w_output @ layer_z)
+               
+            # Compute error    
+            error = yi.T - model_output   
+            
+            # Update the weights
+            w_output += alpha * error @ layer_z.T / xi.shape[0]
+                    
+        if compute_loss:
+            
+            layer_z = np.vstack((np.ones((1, x_matrix.shape[0])), activation_function(w_hidden, x_matrix, gamma)))        
+            model_output =  out_activation_function(w_output @ layer_z)
+            
+            loss_history.append(loss(y, model_output.T))
+            
+            if x_validation is not None:
+                
+                layer_z = np.vstack((np.ones((1, x_validation.shape[0])), activation_function(w_hidden, x_validation, gamma)))
+                model_output_validation = out_activation_function(w_output @ layer_z)
+                
+                validation_loss_history.append(loss(y_validation, model_output_validation.T))
+    
+    return {'w_hidden': w_hidden, 'w_output': w_output, 'gamma': gamma,
+            'loss_history': loss_history, 'validation_loss_history': validation_loss_history,
+            'output': output, 'activation_function': activation_function, 'out_activation_function': out_activation_function}    
+def rbf_predict(model, x, return_class=True):
+     
+    layer_z = np.vstack((np.ones((1, x.shape[0])), model['activation_function'](model['w_hidden'], x, model['gamma'])))
+    model_output =  model['out_activation_function'](model['w_output'] @ layer_z)   
+    
+    if return_class and model['output'] != 'regression': 
+        if model_output.shape[0] == 1:
+            return np.maximum(0, np.sign(model_output[0] - 0.5))
+        else:
+            return np.argmax(model_output, axis=0)
+    else:
+        return model_output    
+
+    
 def train_perceptron(x, y, num_epochs=100, alpha=1, w_initial=None, build_regressors=True):
     
     if build_regressors:
